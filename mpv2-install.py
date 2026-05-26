@@ -7,9 +7,7 @@ import argparse
 import importlib.util
 import os
 import socket
-import secrets
 import shutil
-import string
 import subprocess
 import sys
 import time
@@ -17,6 +15,16 @@ from pathlib import Path
 
 from env_utils import read_env_file, update_env_file
 from log_utils import log
+from password_utils import (
+    INIT_CSF_ENV_KEYS,
+    INIT_MPV2_ENV_KEYS,
+    INIT_QB_ENV_KEYS,
+    STACK_PASSWORD_CHARS_DESC,
+    build_install_password_values,
+    validate_cli_password_args,
+    validate_env_passwords,
+    validate_password_map,
+)
 from path_utils import (
     DIR_MODE,
     DIR_MODE_APP,
@@ -34,9 +42,6 @@ from path_utils import (
 
 DEFAULT_STACK_DIR = Path("/volume1/docker/media-stack")
 DEFAULT_DATA_DIR = Path("/volume1/media-data")
-DEFAULT_MPV2_PASSWORD = ""
-DEFAULT_QB_MEDIA_PASSWORD = ""
-DEFAULT_QB_BRUSH_PASSWORD = ""
 
 REGIONS = ("大陆", "港澳台", "欧美", "日韩", "东南亚", "其他地区")
 MEDIA_CATEGORIES = ("真人电影", "真人剧集", "动漫电影", "动漫剧集", "综艺", "纪录片")
@@ -228,21 +233,33 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--moviepilot-user", default="admin", help="MoviePilot superuser")
     parser.add_argument(
         "--password",
-        help="unified password for MoviePilotV2, qB media, and qB brush; cannot be used with individual passwords",
+        help=(
+            "unified password for MoviePilot, qB media, qB brush, and ChineseSubFinder; "
+            f"allowed chars: {STACK_PASSWORD_CHARS_DESC}; cannot be used with individual passwords"
+        ),
     )
-    parser.add_argument("--moviepilot-password", help="MoviePilot superuser password, defaults to a random 16-character value")
+    parser.add_argument(
+        "--moviepilot-password",
+        help=f"MoviePilot superuser password ({STACK_PASSWORD_CHARS_DESC}), defaults to random",
+    )
     parser.add_argument("--github-token", help="GitHub token for MoviePilot plugin/resource requests")
     parser.add_argument("--postgres-db", default="moviepilotv2", help="PostgreSQL database name")
     parser.add_argument("--postgres-user", default="moviepilotv2", help="PostgreSQL user")
-    parser.add_argument("--postgres-password", help="PostgreSQL password, defaults to a random 16-character value")
-    parser.add_argument("--redis-password", help="Redis password, defaults to a random 16-character value")
+    parser.add_argument(
+        "--postgres-password",
+        help=f"PostgreSQL password ({STACK_PASSWORD_CHARS_DESC}), defaults to random",
+    )
+    parser.add_argument(
+        "--redis-password",
+        help=f"Redis password ({STACK_PASSWORD_CHARS_DESC}), defaults to random",
+    )
     parser.add_argument(
         "--qb-media-password",
-        help="qBittorrent media WebUI password, defaults to a random 16-character value",
+        help=f"qBittorrent media WebUI password ({STACK_PASSWORD_CHARS_DESC}), defaults to random",
     )
     parser.add_argument(
         "--qb-brush-password",
-        help="qBittorrent brush WebUI password, defaults to a random 16-character value",
+        help=f"qBittorrent brush WebUI password ({STACK_PASSWORD_CHARS_DESC}), defaults to random",
     )
     parser.add_argument("--force", action="store_true", help="overwrite existing .env and docker-compose.yml")
     parser.add_argument("--clean", action="store_true", help="stop containers and remove generated stack/download contents")
@@ -250,29 +267,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--init-qb", action="store_true", help="initialize both qBittorrent instances")
     parser.add_argument("--init-emby", action="store_true", help="initialize Emby server binding in MoviePilot via init-mpv2.py")
     parser.add_argument("--init-mpv2", action="store_true", help="initialize MoviePilot settings via init-mpv2.py")
+    parser.add_argument(
+        "--init-csf",
+        action="store_true",
+        help="initialize ChineseSubFinder via init-csf.py (writes ChineseSubFinderSettings.json)",
+    )
+    parser.add_argument("--csf-user", default="admin", help="ChineseSubFinder WebUI username for --init-csf")
+    parser.add_argument(
+        "--csf-password",
+        help=f"ChineseSubFinder WebUI password for --init-csf ({STACK_PASSWORD_CHARS_DESC} only)",
+    )
     parser.add_argument("--host-ip", help="host LAN IP forwarded to init-qb.py and init-mpv2.py")
     args = parser.parse_args()
-    individual_passwords = [
-        args.moviepilot_password,
-        args.qb_media_password,
-        args.qb_brush_password,
-    ]
-    if args.password and any(individual_passwords):
-        parser.error("--password cannot be used with --moviepilot-password, --qb-media-password, or --qb-brush-password")
+    validate_cli_password_args(args, parser.error)
     return args
-
-
-def random_secret(length: int = 16) -> str:
-    alphabet = string.ascii_letters + string.digits
-    return "".join(secrets.choice(alphabet) for _ in range(length))
-
-
-def configured_password(cli_value: str | None, default_value: str) -> str:
-    return cli_value or default_value or random_secret()
-
-
-def selected_password(args: argparse.Namespace, attr: str, default_value: str) -> str:
-    return args.password or configured_password(getattr(args, attr), default_value)
 
 
 def get_lan_ip() -> str:
@@ -353,22 +361,25 @@ def build_stack_paths(stack_dir: Path) -> list[Path]:
 
 
 def env_text(args: argparse.Namespace, stack_dir: Path, data_dir: Path) -> str:
+    install_passwords = build_install_password_values(args)
     values = {
         "STACK_DIR": stack_dir,
         "DATA_DIR": data_dir,
         "PUID": args.puid,
         "PGID": args.pgid,
         "MOVIEPILOT_USER": args.moviepilot_user,
-        "MOVIEPILOT_PASSWORD": selected_password(args, "moviepilot_password", DEFAULT_MPV2_PASSWORD),
+        "MOVIEPILOT_PASSWORD": install_passwords["MOVIEPILOT_PASSWORD"],
         "POSTGRES_DB": args.postgres_db,
         "POSTGRES_USER": args.postgres_user,
-        "POSTGRES_PASSWORD": args.postgres_password or random_secret(),
-        "REDIS_PASSWORD": args.redis_password or random_secret(),
-        "QB_MEDIA_PASSWORD": selected_password(args, "qb_media_password", DEFAULT_QB_MEDIA_PASSWORD),
-        "QB_BRUSH_PASSWORD": selected_password(args, "qb_brush_password", DEFAULT_QB_BRUSH_PASSWORD),
+        "POSTGRES_PASSWORD": install_passwords["POSTGRES_PASSWORD"],
+        "REDIS_PASSWORD": install_passwords["REDIS_PASSWORD"],
+        "QB_MEDIA_PASSWORD": install_passwords["QB_MEDIA_PASSWORD"],
+        "QB_BRUSH_PASSWORD": install_passwords["QB_BRUSH_PASSWORD"],
         "MP_QB_MEDIA_STORAGE_PATH": data_dir / "downloads" / "media",
         "MP_QB_BRUSH_STORAGE_PATH": data_dir / "downloads" / "brush",
     }
+    if "CSF_PASSWORD" in install_passwords:
+        values["CSF_PASSWORD"] = install_passwords["CSF_PASSWORD"]
     if args.github_token:
         values["GITHUB_TOKEN"] = args.github_token
     return "".join(f"{key}={value}\n" for key, value in values.items())
@@ -529,6 +540,39 @@ def run_init_mpv2(
     )
 
 
+def run_init_csf(args: argparse.Namespace, stack_dir: Path, data_dir: Path) -> None:
+    script_path = Path(__file__).with_name("init-csf.py")
+    if not script_path.exists():
+        raise RuntimeError(f"缺少脚本：{script_path}")
+    spec = importlib.util.spec_from_file_location("init_csf_module", script_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"无法加载脚本：{script_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    if not hasattr(module, "run_init_csf"):
+        raise RuntimeError(f"{script_path} 缺少 run_init_csf()")
+
+    log(f"调用 ChineseSubFinder 初始化模块：{script_path}")
+    module.run_init_csf(
+        stack_dir=stack_dir,
+        data_dir=data_dir,
+        csf_user=args.csf_user,
+        csf_password=args.csf_password or args.password,
+    )
+
+
+def check_csf_env_before_init(stack_dir: Path) -> None:
+    env_values = read_env_file(stack_dir / ".env")
+    emby_ok = (
+        env_values.get("EMBY_INITIALED", "").lower() == "true"
+        or env_values.get("EMBY-INITIALED", "").lower() == "true"
+    )
+    if not emby_ok:
+        log("提示：建议先完成 --init-emby，以便写入 EMBY_API_KEY 供字幕联动使用。", "warning")
+    if not env_values.get("EMBY_API_KEY"):
+        raise RuntimeError("Emby 联动需要 .env 中的 EMBY_API_KEY，请先执行 --init-emby。")
+
+
 def run_init_emby(args: argparse.Namespace, host_ip: str, stack_dir: Path) -> None:
     script_path = Path(__file__).with_name("init-emby.py")
     if not script_path.exists():
@@ -575,6 +619,11 @@ def safe_set_init_flag(stack_dir: Path, key: str, value: bool) -> None:
         log(f"写入 {key} 失败：{exc}", "warning", sys.stderr)
 
 
+def validate_stack_env_passwords(stack_dir: Path, keys: tuple[str, ...]) -> None:
+    env_values = read_env_file(stack_dir / ".env")
+    validate_env_passwords(env_values, keys)
+
+
 def apply_cli_env_overrides(args: argparse.Namespace, stack_dir: Path) -> None:
     updates: dict[str, str] = {}
     if args.password:
@@ -583,6 +632,7 @@ def apply_cli_env_overrides(args: argparse.Namespace, stack_dir: Path) -> None:
                 "MOVIEPILOT_PASSWORD": args.password,
                 "QB_MEDIA_PASSWORD": args.password,
                 "QB_BRUSH_PASSWORD": args.password,
+                "CSF_PASSWORD": args.password,
             }
         )
     if args.moviepilot_password:
@@ -591,11 +641,16 @@ def apply_cli_env_overrides(args: argparse.Namespace, stack_dir: Path) -> None:
         updates["QB_MEDIA_PASSWORD"] = args.qb_media_password
     if args.qb_brush_password:
         updates["QB_BRUSH_PASSWORD"] = args.qb_brush_password
+    if args.csf_password:
+        updates["CSF_PASSWORD"] = args.csf_password
     if args.github_token:
         updates["GITHUB_TOKEN"] = args.github_token
 
     if not updates:
         return
+
+    password_updates = {key: value for key, value in updates.items() if key.endswith("_PASSWORD")}
+    validate_password_map(password_updates)
 
     update_env_file(
         stack_dir / ".env",
@@ -679,6 +734,7 @@ def main() -> int:
     log(f"使用主机 IP: {host_ip}")
     if args.init_qb:
         apply_cli_env_overrides(args, stack_dir)
+        validate_stack_env_passwords(stack_dir, INIT_QB_ENV_KEYS)
         try:
             run_init_qb(args, host_ip, stack_dir, data_dir)
             set_init_flag(stack_dir, "QB_INITIALED", True)
@@ -704,9 +760,22 @@ def main() -> int:
     if args.init_mpv2:
         apply_cli_env_overrides(args, stack_dir)
         check_init_flags_for_mpv2(stack_dir)
+        validate_stack_env_passwords(stack_dir, INIT_MPV2_ENV_KEYS)
         host_ip = resolve_host_ip(args)
         log(f"使用主机 IP: {host_ip}")
         run_init_mpv2(args, host_ip, stack_dir, True, True, True)
+        return 0
+
+    if args.init_csf:
+        apply_cli_env_overrides(args, stack_dir)
+        check_csf_env_before_init(stack_dir)
+        validate_stack_env_passwords(stack_dir, INIT_CSF_ENV_KEYS)
+        try:
+            run_init_csf(args, stack_dir, data_dir)
+            set_init_flag(stack_dir, "CSF_INITIALED", True)
+        except Exception:
+            safe_set_init_flag(stack_dir, "CSF_INITIALED", False)
+            raise
         return 0
 
     for path, uid, gid, mode in build_directory_specs(stack_dir, data_dir, args.puid, args.pgid):

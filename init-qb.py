@@ -5,18 +5,13 @@ from __future__ import annotations
 import json
 import re
 import requests
-import secrets
-import string
 import subprocess
 import time
 from pathlib import Path
 
 from env_utils import get_env, read_env_file, update_env_file
 from log_utils import log
-
-def random_secret(length: int = 16) -> str:
-    alphabet = string.ascii_letters + string.digits
-    return "".join(secrets.choice(alphabet) for _ in range(length))
+from password_utils import stack_random_secret, validate_password_map
 
 
 def mask_qb_prefs_for_log(prefs: dict) -> dict:
@@ -389,8 +384,14 @@ def run_init_qb(
     brush_save_path = Path(
         get_env(env_values, "MP_QB_BRUSH_STORAGE_PATH", str(data_dir / "downloads" / "brush"))
     )
-    media_password = get_env(env_values, "QB_MEDIA_PASSWORD", random_secret())
-    brush_password = get_env(env_values, "QB_BRUSH_PASSWORD", random_secret())
+    media_password = get_env(env_values, "QB_MEDIA_PASSWORD", "") or stack_random_secret()
+    brush_password = get_env(env_values, "QB_BRUSH_PASSWORD", "") or stack_random_secret()
+    validate_password_map(
+        {
+            "QB_MEDIA_PASSWORD": media_password,
+            "QB_BRUSH_PASSWORD": brush_password,
+        }
+    )
     update_env_file(
         env_path,
         {

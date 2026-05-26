@@ -33,6 +33,7 @@ from typing import Any
 import requests
 from env_utils import get_env, read_env_file, require_env
 from log_utils import log
+from password_utils import INIT_MPV2_ENV_KEYS, validate_env_passwords
 from path_utils import DIR_MODE_DATA, FILE_MODE, apply_permissions, ensure_directory, resolve_app_ids
 
 SENSITIVE_SETTING_KEYS = {"GITHUB_TOKEN"}
@@ -2185,6 +2186,8 @@ def run_init_mpv2(
     stack_dir = stack_dir.expanduser().resolve()
     if not host_ip:
         raise RuntimeError("host_ip 不能为空，必须由主模块传入。")
+
+    validate_env_passwords(read_env_file(stack_dir / ".env"), INIT_MPV2_ENV_KEYS)
 
     init_moviepilot(
         host_ip=host_ip,

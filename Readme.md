@@ -21,11 +21,12 @@
 - [7. 初始化 qB](#7-初始化-qb)
 - [8. 初始化 Emby 媒体库与 API Key](#8-初始化-emby-媒体库与-api-key)
 - [9. 初始化 MoviePilot（下载器/媒体服务器/目录规则）](#9-初始化-moviepilot下载器媒体服务器目录规则)
-- [10. 目录与挂载规则核对](#10-目录与挂载规则核对)
-- [11. 常用访问端口](#11-常用访问端口)
-- [12. 验证清单](#12-验证清单)
-- [13. 常用维护命令](#13-常用维护命令)
-- [14. MoviePilot 推荐插件（可选）](#14-moviepilot-推荐插件可选)
+- [10. 初始化 ChineseSubFinder（字幕）](#10-初始化-chinesesubfinder字幕)
+- [11. 目录与挂载规则核对](#11-目录与挂载规则核对)
+- [12. 常用访问端口](#12-常用访问端口)
+- [13. 验证清单](#13-验证清单)
+- [14. 常用维护命令](#14-常用维护命令)
+- [15. MoviePilot 推荐插件（可选）](#15-moviepilot-推荐插件可选)
 
 ---
 
@@ -37,7 +38,7 @@ NAS 上搭 MoviePilot + qB + Emby 这一套，**自己部署**往往要在多个
 
 适合：**新搭一套 MoviePilot V2 媒体栈**、希望少踩坑、少手工配置的场景。**旧库迁移不在本脚本范围内**。
 
-**推荐顺序**：§1 准备 → §3 生成目录 → §4 启容器 → §5 网页向导 → §6 写 `.env` → §7 init-qb → §8 init-emby → §9 init-mpv2 → §12 验证 → §14 插件（可选）
+**推荐顺序**：§1 准备 → §3 生成目录 → §4 启容器 → §5 网页向导 → §6 写 `.env` → §7 init-qb → §8 init-emby → §9 init-mpv2 → §10 init-csf → §13 验证 → §15 插件（可选）
 
 以下路径默认根目录为 `/volume1/media-data`；Emby 媒体库默认按**二级地区**建库（`EMBY_LIBRARY_MODE=secondary`）。
 
@@ -215,8 +216,9 @@ cd /path/to/mpv2/install
 - `init-qb.py`
 - `init-emby.py`
 - `init-mpv2.py`
+- `init-csf.py`
 
-插件配置文档（见 §14，需在插件市场安装后手工填写）：
+插件配置文档（见 §15，需在插件市场安装后手工填写）：
 
 ```text
 插件配置/
@@ -238,7 +240,7 @@ cd /path/to/mpv2/install
 | `--puid`                | 容器运行用户 UID                             | 当前用户 UID                      |
 | `--pgid`                | 容器运行用户 GID                             | 当前用户 GID                      |
 | `--moviepilot-user`     | MoviePilot 管理员用户名                      | `admin`                       |
-| `--password`            | 统一设置 `MoviePilot/qB-media/qB-brush` 密码 | 无（随机或由单独参数决定）                 |
+| `--password`            | 统一设置 `MoviePilot/qB-media/qB-brush/CSF` 密码 | 无（随机或由单独参数决定）                 |
 | `--moviepilot-password` | 单独设置 MoviePilot 密码                     | 随机                            |
 | `--qb-media-password`   | 单独设置 qB-media WebUI 密码                 | 随机                            |
 | `--qb-brush-password`   | 单独设置 qB-brush WebUI 密码                 | 随机                            |
@@ -253,13 +255,17 @@ cd /path/to/mpv2/install
 | `--init-qb`             | 初始化两个 qB 实例                            | 关闭                            |
 | `--init-emby`           | 初始化 Emby 媒体库与 API Key                  | 关闭                            |
 | `--init-mpv2`           | 初始化 MoviePilot 下载器/目录/规则               | 关闭                            |
+| `--init-csf`            | 写入 ChineseSubFinder 配置并重启容器             | 关闭                            |
+| `--csf-user`            | ChineseSubFinder WebUI 用户名                  | `admin`                       |
+| `--csf-password`        | ChineseSubFinder WebUI 密码（`A-Za-z0-9!@#%-*`） | 随机（或沿用 `--password`）         |
 | `--host-ip`             | 初始化脚本访问 NAS 服务的局域网 IP（见 §2.3）          | 自动探测                          |
 
 
 注意：
 
-- `--password` 与 `--moviepilot-password/--qb-media-password/--qb-brush-password` 互斥。
-- `--init-qb`、`--init-emby`、`--init-mpv2` 前需先 `docker compose up -d`，且容器处于运行状态。
+- `--password` 与 `--moviepilot-password/--qb-media-password/--qb-brush-password/--csf-password` 互斥。
+- 所有脚本管理的密码（含 `--postgres-password` / `--redis-password`）统一规则：仅英文大小写、数字及 `!@#%-*`（不支持 `_`、`$` 等符号）；校验逻辑见 `password_utils.py`。
+- `--init-qb`、`--init-emby`、`--init-mpv2`、`--init-csf` 前需先 `docker compose up -d`，且容器处于运行状态。
 - `--init-mpv2` 前需先完成 `--init-qb` 和 `--init-emby`，且 `.env` 中 `QB_INITIALED=true`、`EMBY_INITIALED=true`。
 - NAS 上建议用 **root** 执行安装脚本，以便正确设置目录所有者（`PUID/PGID`）；非 root 时可能只能改权限、不能 `chown`。
 
@@ -367,9 +373,9 @@ python3 mpv2-install.py \
 
 说明：
 
-- `--password` 只统一设置密码，用户名统一为admin。
+- `--password` 只统一设置密码，用户名统一为 admin；同时写入 CSF 密码。
 - MoviePilot 用户名通过 `--moviepilot-user` 设置（默认 `admin`）。
-- `--password` 不能和 `--moviepilot-password/--qb-media-password/--qb-brush-password` 同时使用。
+- `--password` 不能和 `--moviepilot-password/--qb-media-password/--qb-brush-password/--csf-password` 同时使用；所有密码参数均须符合统一字符规则（`A-Za-z0-9!@#%-*`）。
 - 首次安装若计划使用插件市场，可加上 `--github-token`（见 §2.2）。
 
 ## 4. 启动容器
@@ -478,7 +484,38 @@ python3 mpv2-install.py --init-mpv2
 docker restart mpv2-moviepilot
 ```
 
-## 10. 目录与挂载规则核对
+## 10. 初始化 ChineseSubFinder（字幕）
+
+建议在 `--init-emby` 完成后执行（需 `.env` 中已有 `EMBY_API_KEY`）。脚本会写入 `chinesesubfinder/config/ChineseSubFinderSettings.json`，跳过 Web 向导，并配置：
+
+- WebUI 账号（`CSF_USER` / `CSF_PASSWORD`）
+- 电影 / 连续剧扫描目录（容器内 `/media/...`）
+- **Emby 联动**：从 Emby 拉取近期入库视频并自动补字幕
+
+```bash
+python3 mpv2-install.py --init-csf --csf-user admin --csf-password 'YourCsfPassword'
+```
+
+也可与安装时统一密码：
+
+```bash
+python3 mpv2-install.py --init-csf --password 'YourStrongPassword'
+```
+
+脚本固定写入以下项（不通过 `.env` 配置）：
+
+- 电影目录：`/media/真人电影`、`/media/动漫电影`、`/media/小电影`、`/media/私享影库`
+- 连续剧目录：`/media/真人剧集`、`/media/动漫剧集`、`/media/综艺`、`/media/纪录片`、`/media/短剧`
+- Emby 联动：启用，`http://emby:8096`，路径映射 `{DATA_DIR}/media` → `/media`
+- 目录扫描间隔：`@every 6h`
+
+`.env` 仅写入账号与初始化标记：`CSF_USER`、`CSF_PASSWORD`、`CSF_INITIALED=true`（`EMBY_API_KEY` 由 `--init-emby` 写入）。
+
+完成后会重启 `mpv2-chinesesubfinder`。WebUI：`http://NAS-IP:7035`。
+
+> 新入库补字幕依赖 **Emby API 联动 + 定时扫目录**，无需 MoviePilot 额外插件。Emby 路径 `${DATA_DIR}/media` 会映射为 CSF 容器内 `/media`。
+
+## 11. 目录与挂载规则核对
 
 详细目录、Emby 库、MoviePilot 规则见文首 **「目录与规则速查」**。此处仅列挂载要点：
 
@@ -488,7 +525,7 @@ docker restart mpv2-moviepilot
 2. Emby 只映射 `/volume1/media-data/media`（看不到 `downloads`）。
 3. ChineseSubFinder 只处理 `/media`（对应 `/volume1/media-data/media`）。
 
-## 11. 常用访问端口
+## 12. 常用访问端口
 
 
 | 服务               | 端口   | 说明         |
@@ -509,7 +546,7 @@ CookieCloud（MoviePilot 内置，浏览器插件同步 PT Cookie）：
 http://NAS-IP:9443/cookiecloud/
 ```
 
-## 12. 验证清单
+## 13. 验证清单
 
 1. `docker compose ps` 全部容器 `Up`。
 2. MoviePilot 能连接 qB 与 Emby。
@@ -517,8 +554,9 @@ http://NAS-IP:9443/cookiecloud/
 4. 订阅下载进入 `downloads/media`，整理后进入 `media` 对应分类目录。
 5. qB-media 分类 `media` / `manual` / `private` 路径正确。
 6. 私享影库、小电影库在 Emby 中已创建；私享影库已对普通账号隐藏权限。
+7. ChineseSubFinder WebUI 可登录，`CSF_INITIALED=true`，Emby 联动已启用。
 
-## 13. 常用维护命令
+## 14. 常用维护命令
 
 停止：
 
@@ -540,9 +578,9 @@ cd /volume1/docker/media-stack
 docker compose up -d
 ```
 
-## 14. MoviePilot 推荐插件（可选）
+## 15. MoviePilot 推荐插件（可选）
 
-脚本**不会**自动安装插件。建议完成 §9 init-mpv2 且 §12 验证通过后，先按 [站点认证及站点添加.md](插件配置/站点认证及站点添加.md) 完成 PT 站点配置，再按需安装下列插件并参照 `插件配置/` 目录文档填写。
+脚本**不会**自动安装插件。建议完成 §9 init-mpv2、§10 init-csf 且 §13 验证通过后，先按 [站点认证及站点添加.md](插件配置/站点认证及站点添加.md) 完成 PT 站点配置，再按需安装下列插件并参照 `插件配置/` 目录文档填写。
 
 
 | 项目 | 配置文件 | 用途 |
@@ -556,7 +594,7 @@ docker compose up -d
 建议安装顺序：
 
 ```text
-1. 完成 §9 init-mpv2，§12 验证日常下载与整理正常
+1. 完成 §9 init-mpv2，§10 init-csf，§13 验证日常下载与整理正常
 2. 配置 PT 站点 → 按 插件配置/站点认证及站点添加.md（认证、添加站点、RSS、订阅）
 3. 需要手动整理 → 安装「目录实时监控」，按 插件配置/目录实时监控插件配置.md 配置
 4. 需要刷流保种 → 安装「站点刷流」，按 插件配置/站点刷流插件配置.md 配置
