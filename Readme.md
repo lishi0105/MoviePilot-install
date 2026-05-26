@@ -223,6 +223,7 @@ cd /path/to/mpv2/install
 ```text
 插件配置/
 ├── 站点认证及站点添加.md
+├── ChineseSubFinder插件配置.md
 ├── 目录实时监控插件配置.md
 ├── 媒体库刮削插件配置.md
 └── 站点刷流插件配置.md
@@ -489,6 +490,7 @@ docker restart mpv2-moviepilot
 建议在 `--init-emby` 完成后执行（需 `.env` 中已有 `EMBY_API_KEY`）。脚本会写入 `chinesesubfinder/config/ChineseSubFinderSettings.json`，跳过 Web 向导，并配置：
 
 - WebUI 账号（`CSF_USER` / `CSF_PASSWORD`）
+- **API Key**（`CSF_API_KEY`，供 MoviePilot 插件调用）
 - 电影 / 连续剧扫描目录（容器内 `/media/...`）
 - **Emby 联动**：从 Emby 拉取近期入库视频并自动补字幕
 
@@ -507,13 +509,14 @@ python3 mpv2-install.py --init-csf --password 'YourStrongPassword'
 - 电影目录：`/media/真人电影`、`/media/动漫电影`、`/media/小电影`、`/media/私享影库`
 - 连续剧目录：`/media/真人剧集`、`/media/动漫剧集`、`/media/综艺`、`/media/纪录片`、`/media/短剧`
 - Emby 联动：启用，`http://emby:8096`，路径映射 `{DATA_DIR}/media` → `/media`
+- API Key：启用，写入 `.env` 的 `CSF_API_KEY`
 - 目录扫描间隔：`@every 6h`
 
-`.env` 仅写入账号与初始化标记：`CSF_USER`、`CSF_PASSWORD`、`CSF_INITIALED=true`（`EMBY_API_KEY` 由 `--init-emby` 写入）。
+`.env` 会写入：`CSF_USER`、`CSF_PASSWORD`、`CSF_API_KEY`、`CSF_INITIALED=true`（`EMBY_API_KEY` 由 `--init-emby` 写入）。
 
 完成后会重启 `mpv2-chinesesubfinder`。WebUI：`http://NAS-IP:7035`。
 
-> 新入库补字幕依赖 **Emby API 联动 + 定时扫目录**，无需 MoviePilot 额外插件。Emby 路径 `${DATA_DIR}/media` 会映射为 CSF 容器内 `/media`。
+> 新入库补字幕依赖 **Emby API 联动 + 定时扫目录**，无需 MoviePilot 额外插件。若希望在 **整理完成瞬间** 也触发补字幕，可安装 MoviePilot「ChineseSubFinder」插件，见 [插件配置/ChineseSubFinder插件配置.md](插件配置/ChineseSubFinder插件配置.md)。
 
 ## 11. 目录与挂载规则核对
 
@@ -554,7 +557,7 @@ http://NAS-IP:9443/cookiecloud/
 4. 订阅下载进入 `downloads/media`，整理后进入 `media` 对应分类目录。
 5. qB-media 分类 `media` / `manual` / `private` 路径正确。
 6. 私享影库、小电影库在 Emby 中已创建；私享影库已对普通账号隐藏权限。
-7. ChineseSubFinder WebUI 可登录，`CSF_INITIALED=true`，Emby 联动已启用。
+7. ChineseSubFinder WebUI 可登录，`CSF_INITIALED=true`，`.env` 含 `CSF_API_KEY`，Emby 联动已启用。
 
 ## 14. 常用维护命令
 
@@ -586,6 +589,7 @@ docker compose up -d
 | 项目 | 配置文件 | 用途 |
 |------|----------|------|
 | 站点认证与添加 | [插件配置/站点认证及站点添加.md](插件配置/站点认证及站点添加.md) | 用户认证、PT 站点 Cookie/Token 添加、RSS 与影视订阅（**非插件**，使用搜索/订阅前建议先完成） |
+| ChineseSubFinder | [插件配置/ChineseSubFinder插件配置.md](插件配置/ChineseSubFinder插件配置.md) | MP 整理完成后通知 CSF 补字幕（**可选**；Emby 联动已覆盖主场景） |
 | 目录实时监控 | [插件配置/目录实时监控插件配置.md](插件配置/目录实时监控插件配置.md) | 监控 `downloads/manual`，手动拷贝/外部导入资源自动识别、刮削、整理 |
 | 媒体库刮削 | [插件配置/媒体库刮削插件配置.md](插件配置/媒体库刮削插件配置.md) | 对已入库历史媒体补海报/NFO；**默认关闭定时**，需要时手动跑一次 |
 | 站点刷流 | [插件配置/站点刷流插件配置.md](插件配置/站点刷流插件配置.md) | 调度 `qB-刷流专用`，资源只进 `downloads/brush`，与日常下载隔离 |
@@ -596,9 +600,10 @@ docker compose up -d
 ```text
 1. 完成 §9 init-mpv2，§10 init-csf，§13 验证日常下载与整理正常
 2. 配置 PT 站点 → 按 插件配置/站点认证及站点添加.md（认证、添加站点、RSS、订阅）
-3. 需要手动整理 → 安装「目录实时监控」，按 插件配置/目录实时监控插件配置.md 配置
-4. 需要刷流保种 → 安装「站点刷流」，按 插件配置/站点刷流插件配置.md 配置
-5. 历史媒体缺元数据 → 临时安装/启用「媒体库刮削」，按 插件配置/媒体库刮削插件配置.md 手动执行一次
+3. （可选）整理完成立刻补字幕 → 安装「ChineseSubFinder」插件，按 插件配置/ChineseSubFinder插件配置.md 配置
+4. 需要手动整理 → 安装「目录实时监控」，按 插件配置/目录实时监控插件配置.md 配置
+5. 需要刷流保种 → 安装「站点刷流」，按 插件配置/站点刷流插件配置.md 配置
+6. 历史媒体缺元数据 → 临时安装/启用「媒体库刮削」，按 插件配置/媒体库刮削插件配置.md 手动执行一次
 ```
 
 注意：插件配置与脚本生成的目录/转移规则一致；不要监控 `downloads/brush` 或最终 `media` 根目录，避免重复整理。

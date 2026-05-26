@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import uuid
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -46,6 +47,24 @@ def resolve_csf_credentials(
         password = stack_random_secret()
         log("未配置 CSF_PASSWORD，已生成符合规则的随机密码并写回 .env。", "warning")
     return username, password
+
+
+def resolve_csf_api_key(config: dict[str, str], existing: dict[str, Any] | None) -> str:
+    env_key = get_env(config, "CSF_API_KEY", "").strip()
+    if env_key:
+        return env_key
+
+    if existing:
+        api_settings = existing.get("experimental_function", {}).get("api_key_settings", {})
+        if api_settings.get("enabled") and api_settings.get("key"):
+            existing_key = str(api_settings["key"]).strip()
+            if existing_key:
+                log("使用已有 ChineseSubFinderSettings.json 中的 API Key。", "success")
+                return existing_key
+
+    api_key = str(uuid.uuid4())
+    log("已生成新的 CSF API Key。", "success")
+    return api_key
 
 
 def ensure_container_running(container_name: str) -> None:
@@ -193,6 +212,7 @@ def build_csf_settings(
     *,
     username: str,
     password: str,
+    csf_api_key: str,
 ) -> dict[str, Any]:
     emby_media_root = str(data_dir / "media").rstrip("/")
     emby_api_key = get_env(config, "EMBY_API_KEY", "")
@@ -217,6 +237,12 @@ def build_csf_settings(
             "api_key": emby_api_key,
             "movie_paths_mapping": path_mapping,
             "series_paths_mapping": path_mapping,
+        },
+        "experimental_function": {
+            "api_key_settings": {
+                "enabled": True,
+                "key": csf_api_key,
+            },
         },
     }
 
@@ -279,13 +305,21 @@ def run_init_csf(
 
     ensure_container_running(CSF_CONTAINER)
 
-    username, password = resolve_csf_credentials(config, cli_user=csf_user, cli_password=csf_password)
-    validate_password_map({"CSF_PASSWORD": password})
-    settings = build_csf_settings(config, data_dir, username=username, password=password)
-
     config_dir = stack_dir / "chinesesubfinder" / "config"
     config_path = config_dir / CSF_SETTINGS_NAME
     existing = load_existing_settings(config_path)
+
+    username, password = resolve_csf_credentials(config, cli_user=csf_user, cli_password=csf_password)
+    validate_password_map({"CSF_PASSWORD": password})
+    csf_api_key = resolve_csf_api_key(config, existing)
+    settings = build_csf_settings(
+        config,
+        data_dir,
+        username=username,
+        password=password,
+        csf_api_key=csf_api_key,
+    )
+
     if existing:
         settings = deep_merge(existing, settings)
 
@@ -298,6 +332,7 @@ def run_init_csf(
         {
             "CSF_USER": username,
             "CSF_PASSWORD": password,
+            "CSF_API_KEY": csf_api_key,
             "CSF_INITIALED": "true",
         },
         log_func=lambda msg: log(msg, "success"),
@@ -316,6 +351,7 @@ def run_init_csf(
         f" series={settings['common_settings']['series_paths']}",
         "success",
     )
+    log("CSF API Key 已启用并写入 .env（CSF_API_KEY），供 MoviePilot 插件使用。", "success")
 
     restart_csf_container()
     log(
