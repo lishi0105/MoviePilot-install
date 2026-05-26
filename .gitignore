@@ -1,0 +1,20 @@
+.vscode/
+
+# Keep existing local script ignore behavior
+*.sh
+
+# Python cache/artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Local env/runtime files
+.env
+.env.*
+*.log
+
+# OS/editor artifacts
+.DS_Store
+
+# Runtime backup files created by init-mpv2.py
+moviepilot-v2/backup/
