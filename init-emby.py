@@ -1107,7 +1107,7 @@ def emby_apply_library_display_order(
                 configuration,
                 user_id=user_id,
             )
-            log(f"已更新 Emby 用户媒体库排序：{user_name}", "success")
+            log(f"已更新 Emby 用户{user_name}媒体库排序：{ordered_view_ids}", "success")
         except Exception as exc:
             log(f"更新 Emby 用户媒体库排序失败：{user_name}，{exc}", "warning")
 
