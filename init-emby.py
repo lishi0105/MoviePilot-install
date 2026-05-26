@@ -11,13 +11,15 @@ Emby 初始化辅助脚本
 1. 等待 Emby API 就绪
 2. 使用管理员账号登录，或使用已有 EMBY_API_KEY
 3. 创建/检查媒体库：
-   - 默认按二级地区目录建库，例如 真人电影-大陆、真人电影-日韩、动漫剧集-日韩、综艺-大陆、纪录片-欧美
-   - 短剧保持一级库
-   - 私享影库默认按地区建电影库，例如 私享影库-国产、私享影库-日韩
+   - 默认按二级地区目录建库，例如 真人电影-大陆、真人剧集-大陆、动漫电影-日韩
+   - 首页排序：真人电影{地区} → 真人剧集{地区} → 动漫电影{地区} → 动漫剧集{地区}
+     → 综艺{地区} → 纪录片{地区} → 私享影库{地区} → 短剧 → 小电影
+   - 地区顺序：大陆 → 港澳台 → 日韩 → 欧美 → 东南亚 → 其他地区
 4. 删除旧媒体库：切换为二级库时，可先删除脚本管理范围内的旧一级库
-5. 尝试创建 MoviePilot API Key，并写回 .env
-6. 触发媒体库扫描
-7. 打印当前 VirtualFolders / Users / ServerInfo
+5. 为所有用户写入首页媒体库排序（OrderedViews）
+6. 尝试创建 MoviePilot API Key，并写回 .env
+7. 触发媒体库扫描
+8. 打印当前 VirtualFolders / Users / ServerInfo
 
 依赖：
 pip install requests
@@ -49,6 +51,9 @@ EMBY_PASSWORD=你的Emby管理员密码
 # 是否连当前目标库也删除后重建。默认 false，避免重复运行脚本时频繁重建库 ID。
 # 如果你想彻底重建所有脚本管理的 Emby 库，可以临时改成 true，执行完再改回 false。
 # EMBY_RECREATE_EXISTING_LIBRARIES=false
+
+# 是否为所有 Emby 用户应用首页媒体库排序（OrderedViews）。默认 true。
+# EMBY_APPLY_LIBRARY_ORDER=true
 
 DATA_DIR=/volume1/media-data
 EMBY_API_KEY_APP_NAME=MoviePilotV2
@@ -83,6 +88,30 @@ def get_bool_env(env_values: dict[str, str], key: str, default: bool) -> bool:
 
 DEFAULT_REGIONS = ["大陆", "港澳台", "日韩", "欧美", "东南亚", "其他地区"]
 DEFAULT_PRIVATE_REGIONS = ["国产", "日韩", "欧美", "其他地区"]
+
+# 二级媒体库：先按分类，再按地区；地区顺序见 DEFAULT_REGIONS。
+LIBRARY_CATEGORY_SPECS: tuple[tuple[str, str], ...] = (
+    ("真人电影", "movies"),
+    ("真人剧集", "tvshows"),
+    ("动漫电影", "movies"),
+    ("动漫剧集", "tvshows"),
+    ("综艺", "tvshows"),
+    ("纪录片", "tvshows"),
+)
+
+
+def emby_sort_by_order(values: list[str], preferred: list[str]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for item in preferred:
+        if item in values and item not in seen:
+            ordered.append(item)
+            seen.add(item)
+    for item in values:
+        if item not in seen:
+            ordered.append(item)
+            seen.add(item)
+    return ordered
 
 
 def get_csv_env(env_values: dict[str, str], key: str, default_values: list[str]) -> list[str]:
@@ -479,9 +508,9 @@ def emby_build_libraries(config: dict[str, str]) -> list[dict[str, str]]:
             {"name": "动漫剧集", "collection_type": "tvshows", "path": f"{media_root}/动漫剧集"},
             {"name": "综艺", "collection_type": "tvshows", "path": f"{media_root}/综艺"},
             {"name": "纪录片", "collection_type": "tvshows", "path": f"{media_root}/纪录片"},
+            {"name": "私享影库", "collection_type": "movies", "path": f"{media_root}/私享影库"},
             {"name": "短剧", "collection_type": "tvshows", "path": f"{media_root}/短剧"},
             {"name": "小电影", "collection_type": "movies", "path": f"{media_root}/小电影"},
-            {"name": "私享影库", "collection_type": "movies", "path": f"{media_root}/私享影库"},
         ]
 
     if library_mode not in ("secondary", "level2", "two", "二级"):
@@ -490,8 +519,11 @@ def emby_build_libraries(config: dict[str, str]) -> list[dict[str, str]]:
             f"{library_mode}，允许值：secondary/primary"
         )
 
-    regions = get_csv_env(config, "EMBY_REGIONS", DEFAULT_REGIONS)
-    private_regions = get_csv_env(config, "EMBY_PRIVATE_REGIONS", DEFAULT_PRIVATE_REGIONS)
+    regions = emby_sort_by_order(get_csv_env(config, "EMBY_REGIONS", DEFAULT_REGIONS), DEFAULT_REGIONS)
+    private_regions = emby_sort_by_order(
+        get_csv_env(config, "EMBY_PRIVATE_REGIONS", DEFAULT_PRIVATE_REGIONS),
+        DEFAULT_PRIVATE_REGIONS,
+    )
     private_mode = get_env(config, "EMBY_PRIVATE_LIBRARY_MODE", "region").strip().lower()
 
     libraries: list[dict[str, str]] = []
@@ -503,37 +535,15 @@ def emby_build_libraries(config: dict[str, str]) -> list[dict[str, str]]:
             "path": path,
         })
 
-    # 电影类：按地区拆成独立电影库。
-    for region in regions:
-        add(f"真人电影-{region}", "movies", f"{media_root}/真人电影/{region}")
-
-    for region in regions:
-        add(f"动漫电影-{region}", "movies", f"{media_root}/动漫电影/{region}")
-
-    # 剧集类：按地区拆成独立电视节目库。
-    for region in regions:
-        add(f"真人剧集-{region}", "tvshows", f"{media_root}/真人剧集/{region}")
-
-    for region in regions:
-        add(f"动漫剧集-{region}", "tvshows", f"{media_root}/动漫剧集/{region}")
-
-    for region in regions:
-        add(f"综艺-{region}", "tvshows", f"{media_root}/综艺/{region}")
-
-    for region in regions:
-        add(f"纪录片-{region}", "tvshows", f"{media_root}/纪录片/{region}")
+    for category, collection_type in LIBRARY_CATEGORY_SPECS:
+        for region in regions:
+            add(f"{category}-{region}", collection_type, f"{media_root}/{category}/{region}")
 
     # 短剧、小电影不做地区二级分类。
-    add("短剧", "tvshows", f"{media_root}/短剧")
-    add("小电影", "movies", f"{media_root}/小电影")
-
-    # 当前 MoviePilot 目录规划中，私享影库是 /私享影库/地区，且只用于电影。
-    # 所以这里默认按地区创建 movies 库，不生成私享剧集库。
     if private_mode in ("region", "mixed", "movies", "movie", "电影", "地区"):
         for region in private_regions:
             add(f"私享影库-{region}", "movies", f"{media_root}/私享影库/{region}")
     elif private_mode in ("split", "type", "类型"):
-        # 兼容旧配置：split/type 也只创建电影库。
         for region in private_regions:
             add(f"私享电影-{region}", "movies", f"{media_root}/私享影库/电影/{region}")
     elif private_mode in ("none", "off", "关闭"):
@@ -543,6 +553,9 @@ def emby_build_libraries(config: dict[str, str]) -> list[dict[str, str]]:
             "EMBY_PRIVATE_LIBRARY_MODE 不支持："
             f"{private_mode}，允许值：region/split/none"
         )
+
+    add("短剧", "tvshows", f"{media_root}/短剧")
+    add("小电影", "movies", f"{media_root}/小电影")
 
     return libraries
 
@@ -832,6 +845,163 @@ def emby_init_libraries(
         ensure_ascii=False,
         indent=2,
     ))
+
+    emby_apply_library_display_order(
+        session,
+        base_url,
+        token,
+        config,
+        user_id=user_id,
+    )
+
+
+def emby_folder_item_id(folder: dict[str, Any]) -> str:
+    for key in ("ItemId", "Id", "id"):
+        value = folder.get(key)
+        if value:
+            return str(value)
+    return ""
+
+
+def emby_build_ordered_view_ids(
+    folders: list[dict[str, Any]],
+    desired_names: list[str],
+) -> list[str]:
+    name_to_id: dict[str, str] = {}
+    for folder in folders:
+        name = str(folder.get("Name", "")).strip()
+        item_id = emby_folder_item_id(folder)
+        if name and item_id:
+            name_to_id[name] = item_id
+
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for name in desired_names:
+        item_id = name_to_id.get(name)
+        if item_id and item_id not in seen:
+            ordered.append(item_id)
+            seen.add(item_id)
+
+    for folder in folders:
+        item_id = emby_folder_item_id(folder)
+        if item_id and item_id not in seen:
+            ordered.append(item_id)
+            seen.add(item_id)
+
+    return ordered
+
+
+def emby_get_user_configuration(
+    session: requests.Session,
+    base_url: str,
+    token: str,
+    target_user_id: str,
+    *,
+    user_id: str = "",
+) -> dict[str, Any]:
+    resp = emby_request(
+        session,
+        "GET",
+        base_url,
+        f"/Users/{target_user_id}/Configuration",
+        token=token,
+        user_id=user_id or None,
+        timeout=20,
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(
+            f"读取 Emby 用户配置失败：{target_user_id}，"
+            f"状态码={resp.status_code}，返回={resp.text}"
+        )
+
+    data = resp.json()
+    if isinstance(data, dict):
+        return data
+    raise RuntimeError(f"无法识别 Emby 用户配置返回结构：{data}")
+
+
+def emby_set_user_configuration(
+    session: requests.Session,
+    base_url: str,
+    token: str,
+    target_user_id: str,
+    configuration: dict[str, Any],
+    *,
+    user_id: str = "",
+) -> None:
+    resp = emby_request(
+        session,
+        "POST",
+        base_url,
+        f"/Users/{target_user_id}/Configuration",
+        token=token,
+        user_id=user_id or None,
+        json_body=configuration,
+        timeout=20,
+    )
+    if resp.status_code not in (200, 204):
+        raise RuntimeError(
+            f"写入 Emby 用户配置失败：{target_user_id}，"
+            f"状态码={resp.status_code}，返回={resp.text}"
+        )
+
+
+def emby_apply_library_display_order(
+    session: requests.Session,
+    base_url: str,
+    token: str,
+    config: dict[str, str],
+    *,
+    user_id: str = "",
+) -> None:
+    if not get_bool_env(config, "EMBY_APPLY_LIBRARY_ORDER", True):
+        log("EMBY_APPLY_LIBRARY_ORDER=false，跳过媒体库排序。", "warning")
+        return
+
+    folders = emby_get_virtual_folders(session, base_url, token, user_id)
+    desired_names = [library["name"] for library in emby_build_libraries(config)]
+    ordered_view_ids = emby_build_ordered_view_ids(folders, desired_names)
+    if not ordered_view_ids:
+        log("未找到可排序的媒体库 ItemId，跳过 OrderedViews。", "warning")
+        return
+
+    users = emby_list_users(session, base_url, token, user_id)
+    if not users:
+        log("未找到 Emby 用户，跳过媒体库排序。", "warning")
+        return
+
+    for user in users:
+        target_user_id = str(user.get("Id") or "").strip()
+        user_name = str(user.get("Name") or target_user_id).strip()
+        if not target_user_id:
+            continue
+        try:
+            configuration = emby_get_user_configuration(
+                session,
+                base_url,
+                token,
+                target_user_id,
+                user_id=user_id,
+            )
+            configuration["OrderedViews"] = ordered_view_ids
+            emby_set_user_configuration(
+                session,
+                base_url,
+                token,
+                target_user_id,
+                configuration,
+                user_id=user_id,
+            )
+            log(f"已更新 Emby 用户媒体库排序：{user_name}", "success")
+        except Exception as exc:
+            log(f"更新 Emby 用户媒体库排序失败：{user_name}，{exc}", "warning")
+
+    log(
+        "媒体库排序："
+        + " → ".join(desired_names[:6])
+        + (" → ..." if len(desired_names) > 6 else ""),
+        "success",
+    )
 
 
 def emby_scan_library(
