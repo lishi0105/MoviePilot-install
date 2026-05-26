@@ -473,6 +473,13 @@ python3 mpv2-install.py --init-emby
 
 地区顺序：`大陆 → 港澳台 → 日韩 → 欧美 → 东南亚 → 其他地区`（可通过 `.env` 的 `EMBY_REGIONS` 调整列表，排序仍按此优先级）。
 
+同时会为脚本管理的全部媒体库同步 **LibraryOptions**（新建与已存在库均适用）：
+
+- 元数据/图片语言：`zh-CN`，国家：`CN`
+- 实时监控：开
+- 字幕下载语言：`chi`、`zho`；不随媒体保存外挂字幕（由 CSF 处理）
+- 私享影库 / 小电影：启用成人元数据（`EnableAdultMetadata`）
+
 完成后会写入：
 
 ```text

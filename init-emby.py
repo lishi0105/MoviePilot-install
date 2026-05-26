@@ -17,9 +17,10 @@ Emby 初始化辅助脚本
    - 地区顺序：大陆 → 港澳台 → 日韩 → 欧美 → 东南亚 → 其他地区
 4. 删除旧媒体库：切换为二级库时，可先删除脚本管理范围内的旧一级库
 5. 为所有用户写入首页媒体库排序（OrderedViews）
-6. 尝试创建 MoviePilot API Key，并写回 .env
-7. 触发媒体库扫描
-8. 打印当前 VirtualFolders / Users / ServerInfo
+6. 同步脚本管理媒体库的 LibraryOptions（中文元数据、实时监控、字幕语言等）
+7. 尝试创建 MoviePilot API Key，并写回 .env
+8. 触发媒体库扫描
+9. 打印当前 VirtualFolders / Users / ServerInfo
 
 依赖：
 pip install requests
@@ -54,6 +55,9 @@ EMBY_PASSWORD=你的Emby管理员密码
 
 # 是否为所有 Emby 用户应用首页媒体库排序（OrderedViews）。默认 true。
 # EMBY_APPLY_LIBRARY_ORDER=true
+
+# 是否同步脚本管理媒体库的 LibraryOptions（中文元数据、实时监控、字幕语言等）。默认 true。
+# EMBY_SYNC_LIBRARY_OPTIONS=true
 
 DATA_DIR=/volume1/media-data
 EMBY_API_KEY_APP_NAME=MoviePilotV2
@@ -383,21 +387,31 @@ def emby_get_virtual_folders(
     raise RuntimeError(f"无法识别 Emby 媒体库返回结构：{data}")
 
 
-def emby_create_virtual_folder(
-    session: requests.Session,
-    base_url: str,
-    token: str,
-    *,
-    name: str,
-    collection_type: str,
-    path: str,
-    refresh_library: bool = False,
-    user_id: str = "",
-) -> None:
-    """
-    创建 Emby 媒体库。
-    """
-    library_options = {
+def emby_folder_item_id(folder: dict[str, Any]) -> str:
+    for key in ("ItemId", "Id", "id"):
+        value = folder.get(key)
+        if value:
+            return str(value)
+    return ""
+
+
+def emby_find_folder(folders: list[dict[str, Any]], name: str) -> dict[str, Any] | None:
+    for folder in folders:
+        if str(folder.get("Name", "")).strip() == name:
+            return folder
+    return None
+
+
+def emby_library_needs_adult_metadata(library_name: str) -> bool:
+    return (
+        library_name.startswith("私享影库")
+        or library_name.startswith("私享电影")
+        or library_name == "小电影"
+    )
+
+
+def emby_build_library_options(path: str, *, library_name: str = "") -> dict[str, Any]:
+    return {
         "EnableArchiveMediaFiles": False,
         "EnablePhotos": False,
         "EnableRealtimeMonitor": True,
@@ -439,13 +453,30 @@ def emby_create_virtual_folder(
         "HearingImpairedSubtitlesOnly": False,
         "CollapseSingleItemFolders": False,
         "ForceCollapseSingleItemFolders": False,
-        "EnableAdultMetadata": False,
+        "EnableAdultMetadata": emby_library_needs_adult_metadata(library_name),
         "ImportCollections": True,
         "EnableMultiVersionByFiles": True,
         "EnableMultiVersionByMetadata": True,
         "EnableMultiPartItems": True,
         "MinCollectionItems": 2,
     }
+
+
+def emby_create_virtual_folder(
+    session: requests.Session,
+    base_url: str,
+    token: str,
+    *,
+    name: str,
+    collection_type: str,
+    path: str,
+    refresh_library: bool = False,
+    user_id: str = "",
+) -> None:
+    """
+    创建 Emby 媒体库。
+    """
+    library_options = emby_build_library_options(path, library_name=name)
 
     payload = {
         "Name": name,
@@ -473,6 +504,89 @@ def emby_create_virtual_folder(
         )
 
     log(f"创建 Emby 媒体库成功：{name} -> {path}", "success")
+
+
+def emby_update_library_options(
+    session: requests.Session,
+    base_url: str,
+    token: str,
+    *,
+    library_id: str,
+    library_name: str,
+    path: str,
+    user_id: str = "",
+) -> None:
+    library_options = emby_build_library_options(path, library_name=library_name)
+    payload = {
+        "Id": library_id,
+        "LibraryOptions": library_options,
+    }
+    resp = emby_request(
+        session,
+        "POST",
+        base_url,
+        "/Library/VirtualFolders/LibraryOptions",
+        token=token,
+        user_id=user_id or None,
+        json_body=payload,
+        timeout=30,
+    )
+    if resp.status_code not in (200, 204):
+        raise RuntimeError(
+            f"更新 Emby 媒体库选项失败：{library_name}，"
+            f"状态码={resp.status_code}，返回={resp.text}"
+        )
+
+
+def emby_sync_managed_library_options(
+    session: requests.Session,
+    base_url: str,
+    token: str,
+    config: dict[str, str],
+    folders: list[dict[str, Any]],
+    *,
+    user_id: str = "",
+) -> None:
+    if not get_bool_env(config, "EMBY_SYNC_LIBRARY_OPTIONS", True):
+        log("EMBY_SYNC_LIBRARY_OPTIONS=false，跳过媒体库选项同步。", "warning")
+        return
+
+    desired_libraries = emby_build_libraries(config)
+    updated = 0
+    for library in desired_libraries:
+        name = library["name"]
+        path = library["path"]
+        folder = emby_find_folder(folders, name)
+        if not folder:
+            log(f"媒体库不存在，跳过选项同步：{name}", "warning")
+            continue
+
+        library_id = emby_folder_item_id(folder)
+        if not library_id:
+            log(f"媒体库缺少 ItemId，跳过选项同步：{name}", "warning")
+            continue
+
+        try:
+            emby_update_library_options(
+                session,
+                base_url,
+                token,
+                library_id=library_id,
+                library_name=name,
+                path=path,
+                user_id=user_id,
+            )
+            updated += 1
+            log(f"已同步 Emby 媒体库选项：{name}", "success")
+        except Exception as exc:
+            log(f"同步 Emby 媒体库选项失败：{name}，{exc}", "warning")
+
+    if updated:
+        log(
+            "媒体库选项：中文元数据(zh-CN)、实时监控、字幕语言(chi/zho)、"
+            f"私享/小电影启用成人元数据；已同步 {updated} 个库。",
+            "success",
+        )
 
 
 def emby_library_exists(folders: list[dict[str, Any]], name: str) -> bool:
@@ -846,6 +960,15 @@ def emby_init_libraries(
         indent=2,
     ))
 
+    emby_sync_managed_library_options(
+        session,
+        base_url,
+        token,
+        config,
+        folders_after,
+        user_id=user_id,
+    )
+
     emby_apply_library_display_order(
         session,
         base_url,
@@ -853,14 +976,6 @@ def emby_init_libraries(
         config,
         user_id=user_id,
     )
-
-
-def emby_folder_item_id(folder: dict[str, Any]) -> str:
-    for key in ("ItemId", "Id", "id"):
-        value = folder.get(key)
-        if value:
-            return str(value)
-    return ""
 
 
 def emby_build_ordered_view_ids(
