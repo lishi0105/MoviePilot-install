@@ -1,12 +1,22 @@
 # MoviePilotV2 自动化部署
 
-## 本仓库实现目标
+<p align="center">
+  <img src="moviepilotv2-logo.png" alt="MoviePilotV2 自动化部署" width="760">
+</p>
 
-NAS 上搭 MoviePilot + qB + Emby 这一套，**自己部署**往往要在多个容器、目录、Web 页面之间来回折腾；**某宝某鱼**找人代部署通常收费不低。本脚本尽量将部署、初始化、配置通过脚本实现，不再依赖手动配置，并提供几个常用插件的设置说明。
+## 仓库简介
 
-在此基础上，脚本还顺带处理了常见工程问题：双 qB 隔离刷流、Emby 不看下载临时目录、媒体库按类型+地区预置、Docker/Compose 环境检查、目录权限等（详见下文「目录与规则速查」）。
+NAS 上搭 MoviePilot + qB + Emby 这一套，**手动部署**往往要在多个容器、目录、Web 页面之间来回折腾；**某宝某鱼**找人代部署通常收费不低。本仓库用脚本把部署与初始化串成一条流水线，尽量做到**少人工介入**。
 
-适合：**新搭一套 MoviePilot V2 媒体栈**、希望少踩坑、少手工配置的场景。**旧库迁移不在本脚本范围内**。
+**主要功能：**
+
+- **一键部署媒体栈**：生成 Docker Compose、`.env` 与目录结构，启动 MoviePilot、双 qB、Emby、ChineseSubFinder 等容器
+- **组件自动初始化**：依次完成 qB WebUI、Emby 媒体库、MoviePilot 下载器/规则/分类、ChineseSubFinder 配置
+- **预置目录与整理规则**：下载区与媒体库按类型、地区划分，MoviePilot 自动分类并整理入库
+- **Emby 开箱即用**：批量建库、首页排序、库选项同步；挂载仅暴露最终媒体目录，不暴露下载临时目录
+- **部署前检查与权限**：Docker / Compose 环境校验、统一密码规则、目录权限修正
+
+适合：**新搭一套 MoviePilot V2 媒体栈**、希望少手工配置的场景。**旧库迁移不在本仓库范围内**。目录与规则细节见下文「目录与规则速查」。
 
 **推荐顺序**：§1 准备 → §3 生成目录 → §4 启容器 → §5 网页向导 → §6 写 `.env` → §7 init-qb → §8 init-emby → §9 init-mpv2 → §10 init-csf → §13 验证 → §15 插件（可选）
 
@@ -46,7 +56,7 @@ NAS 上搭 MoviePilot + qB + Emby 这一套，**自己部署**往往要在多个
 | `media/未分类/剧集`    | MoviePilot 兜底目录（脚本补建）    |
 
 
-> `downloads/private`、`media/小电影` 需自行整理入库；不走 MoviePilot 自动刮削转移，可使用[moviepilot插件库](https://github.com/lishi0105/MoviePilot-Plugins)插件实现对非公开发行影片的自动整理入库。
+> `downloads/private`、`media/小电影` 面向非常规发行影片，所以无法自动刮削整理，需自行整理入库；也可搜索或自行实现第三方插件实现对非常规影片的刮削整理，刮削逻辑也比较简单，扫描目录，通过ffmpeg生成缩略图，有条件的通过AI，没条件的生成简单媒体信息转移入库即可。
 
 ### 2. Emby 媒体库与文件夹
 
@@ -243,17 +253,8 @@ cd /path/to/mpv2/install
 ### 2.2 `--github-token` 说明
 
 MoviePilot 安装插件、拉取 GitHub 上的规则/资源时会访问 GitHub API。未配置 Token 时容易触发**匿名 API 限流**，表现为插件市场加载失败、索引更新超时等。
-
-
-| 项目     | 说明                                                                                                                  |
-| -------- | ------------------------------------------------------------------------------------------------------------------- |
-| 作用     | 写入 `.env` 的 `GITHUB_TOKEN`，并在 `--init-mpv2` 时同步到 MoviePilot 系统配置                                                    |
-| 是否必填 | 否；不装插件、不依赖 GitHub 资源时可省略                                                                                            |
-| 推荐场景 | 需要从插件市场安装插件、使用依赖 GitHub 的索引/规则时建议配置                                                                                 |
-| 获取方式 | GitHub → Settings → Developer settings → Personal access tokens → 生成 **classic** token；勾选 `public_repo`（只读公开仓库一般够用） |
-| 写入时机 | 初次 `mpv2-install.py` 时加 `--github-token`，或后续写入 `.env` 再执行 `--init-mpv2`                                             |
-| 安全     | Token 存在 `.env`（权限 `600`），不要提交到 git                                                                                 |
-
+> 获取方式: GitHub → Settings → Developer settings → Personal access tokens → 生成 **classic** token；勾选 `public_repo`（只读公开仓库一般够用）
+> 可以通过--github-token将token写入.env文件，由脚本自行填充到moviepilot设置中，也可自行在moviepilot中设置
 
 示例：
 
@@ -262,7 +263,7 @@ MoviePilot 安装插件、拉取 GitHub 上的规则/资源时会访问 GitHub A
 python3 mpv2-install.py --password 'YourStrongPassword' --github-token 'ghp_xxxxxxxx'
 
 # 已安装后补写：编辑 .env 增加 GITHUB_TOKEN=...，再重新初始化 MoviePilot
-python3 mpv2-install.py --init-mpv2 --host-ip 192.168.1.100
+python3 mpv2-install.py --init-mpv2
 ```
 
 ### 2.3 `--host-ip` 说明
@@ -271,46 +272,7 @@ python3 mpv2-install.py --init-mpv2 --host-ip 192.168.1.100
 
 脚本在**宿主机**上通过「NAS 局域网 IP + 端口映射」访问各服务 API，与容器内 Docker 网络地址（如 `qb-media:7097`）不同。
 
-
-| 项目     | 说明                                                                       |
-| ------ | ------------------------------------------------------------------------ |
-| 作用     | 指定 NAS 在局域网中的可达地址，供初始化脚本调用 Web API                                       |
-| 是否必填   | 否；默认自动探测本机内网 IP                                                          |
-| 自动探测方式 | 向 `223.5.5.5:80` 发起 UDP 连接，取本机出口网卡 IP                                    |
-| 填写格式   | 纯 IP，如 `192.168.1.100`；也支持 `http://192.168.1.100`（Emby / MoviePilot 会识别） |
-
-
-**各 init 命令中的实际用途**
-
-
-| 命令             | 访问地址（默认）                                        | 说明                                             |
-| ---------------- | ------------------------------------------------- | ---------------------------------------------- |
-| `--init-qb`      | `http://{host-ip}:7097`、`http://{host-ip}:7098`  | 从宿主机登录 qB WebUI、写配置                            |
-| `--init-emby`    | `http://{host-ip}:7096`                           | 创建媒体库、生成 API Key（若 `.env` 已有 `EMBY_URL` 则优先用它） |
-| `--init-mpv2`    | `http://{host-ip}:9443`                           | 登录 MoviePilot 并写入下载器 / 目录 / 规则                 |
-
-
-**建议手动指定 `--host-ip` 的情况**
-
-- 自动探测到的 IP 不对（多网卡、VPN、Docker 桥接网卡、`127.x`）
-- NAS 有多个局域网段，希望固定用访问 Emby/MoviePilot 的那个 IP
-- 通过 SSH 在 NAS 上跑脚本，但要从「你浏览器访问用的那个 IP」做初始化
-- 自动探测失败报错：`未能自动获取真实内网 IP，请使用 --host-ip 指定`
-
-**不需要 `--host-ip` 的情况**
-
-- 你在 NAS 本机终端执行脚本，且自动探测打印的 IP 与浏览器访问地址一致
-
-示例：
-
-```bash
-# 三个 init 建议使用同一个 IP（换成你实际访问 NAS 的地址）
-NAS_IP=192.168.1.100
-
-python3 mpv2-install.py --init-qb   --host-ip $NAS_IP
-python3 mpv2-install.py --init-emby --host-ip $NAS_IP
-python3 mpv2-install.py --init-mpv2 --host-ip $NAS_IP
-```
+> 未指定设备内网IP时，脚本会自行探测并输出探测结果，如果探测失败请通过--host-ip指定
 
 > **注意**：`--host-ip` 只影响**初始化脚本**怎么连 API；MoviePilot 连接 qB/Emby 走的是 Docker 内网地址（`.env` 里 `MP_QB_MEDIA_HOST=http://qb-media:7097` 等），与 `--host-ip` 无关。
 
@@ -358,23 +320,23 @@ docker compose up -d
 
 启动后服务包括：
 
-- MoviePilot
-- PostgreSQL
-- Redis
-- qB-media
-- qB-brush
-- Emby
-- ChineseSubFinder
+| 服务     | 作用                                                       |
+| ---------- | ---------------------------------------------------------- |
+| MoviePilot | 媒体栈中枢：订阅/搜索、资源识别、元数据刮削、文件整理入库，并同步 Emby |
+| PostgreSQL | MoviePilot V2 后端数据库，保存用户配置、订阅、站点、历史记录等 |
+| Redis   | MoviePilot 缓存与任务队列，支撑后台调度与状态存储 |
+| Emby | 媒体服务器：刮削展示、播放、权限与首页库排序 |
+| qB-media | 日常订阅与搜索下载的 BT 客户端（对应 `downloads/media` 等目录） |
+| qB-brush | 刷流保种专用 BT 客户端，与 qB-media 隔离，下载内容不参与自动整理 |
+| ChineseSubFinder | 扫描 `media` 目录，自动下载/匹配中文字幕，并可联动 Emby 补字幕 |
 
 ## 5. 首次网页初始化
+只需要对emby做webui的手动初始化；
 
 ### 5.1 Emby
 
-先打开 Emby 完成首次向导并创建管理员账号：
+先内网打开`http://NAS-IP:7096` Emby webui 网页 选择语言等完成首次向导并创建管理员账号：
 
-```text
-http://NAS-IP:7096
-```
 
 ## 6. 配置 `.env` 关键项
 
@@ -384,7 +346,7 @@ http://NAS-IP:7096
 /volume1/docker/media-stack/.env
 ```
 
-**在 `--init-emby` 之前**，至少写入 Emby 管理员账号（§5.1 向导里创建的）：
+**在 `--init-emby` 之前**，必须写入 Emby 管理员账号和密码（§5.1 向导里创建的）：
 
 ```text
 EMBY_USER=admin
