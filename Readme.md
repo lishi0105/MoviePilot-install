@@ -1,34 +1,4 @@
-# MoviePilot 媒体栈部署
-
-## 目录
-
-- [本仓库实现目标](#本仓库实现目标)
-- [目录与规则速查](#目录与规则速查)
-- [1. 前置准备（NAS）](#1-前置准备nas)
-  - [1.1 网络环境](#11-网络环境)
-  - [1.2 共享目录](#12-共享目录)
-  - [1.3 Docker 支持](#13-docker-支持)
-- [2. 脚本说明](#2-脚本说明)
-  - [2.1 安装脚本参数表](#21-安装脚本参数表)
-  - [2.2 `--github-token` 说明](#22---github-token-说明)
-  - [2.3 `--host-ip` 说明](#23---host-ip-说明)
-- [3. 一键生成目录与 compose](#3-一键生成目录与-compose)
-- [4. 启动容器](#4-启动容器)
-- [5. 首次网页初始化](#5-首次网页初始化)
-  - [5.1 Emby](#51-emby)
-  - [5.2 MoviePilot](#52-moviepilot)
-- [6. 配置 `.env` 关键项](#6-配置-env-关键项)
-- [7. 初始化 qB](#7-初始化-qb)
-- [8. 初始化 Emby 媒体库与 API Key](#8-初始化-emby-媒体库与-api-key)
-- [9. 初始化 MoviePilot（下载器/媒体服务器/目录规则）](#9-初始化-moviepilot下载器媒体服务器目录规则)
-- [10. 初始化 ChineseSubFinder（字幕）](#10-初始化-chinesesubfinder字幕)
-- [11. 目录与挂载规则核对](#11-目录与挂载规则核对)
-- [12. 常用访问端口](#12-常用访问端口)
-- [13. 验证清单](#13-验证清单)
-- [14. 常用维护命令](#14-常用维护命令)
-- [15. MoviePilot 推荐插件（可选）](#15-moviepilot-推荐插件可选)
-
----
+# MoviePilotV2 自动化部署
 
 ## 本仓库实现目标
 
@@ -40,7 +10,7 @@ NAS 上搭 MoviePilot + qB + Emby 这一套，**自己部署**往往要在多个
 
 **推荐顺序**：§1 准备 → §3 生成目录 → §4 启容器 → §5 网页向导 → §6 写 `.env` → §7 init-qb → §8 init-emby → §9 init-mpv2 → §10 init-csf → §13 验证 → §15 插件（可选）
 
-以下路径默认根目录为 `/volume1/media-data`；Emby 媒体库默认按**二级地区**建库（`EMBY_LIBRARY_MODE=secondary`）。
+以下路径默认根目录为 `/volume1/media-data`；Emby 媒体库默认按**二级地区**建库。
 
 ## 目录与规则速查
 
@@ -51,19 +21,19 @@ NAS 上搭 MoviePilot + qB + Emby 这一套，**自己部署**往往要在多个
 **下载目录**
 
 
-| 路径                  | 用途        | MoviePilot | qB                    |
-| ------------------- | --------- | ---------- | --------------------- |
+| 路径                  | 用途           | MoviePilot | qB                    |
+| ------------------- | ----------------- | ---------- | --------------------- |
 | `downloads/media`   | 日常订阅/搜索下载 | 整理         | qB-media 默认分类         |
-| `downloads/brush`   | 刷流保种      | 不整理        | qB-brush 默认分类         |
-| `downloads/manual`  | 手动/临时下载   | 整理         | qB-media 分类 `manual`  |
-| `downloads/private` | 私密视频暂存    | 不处理        | qB-media 分类 `private` |
+| `downloads/brush`   | 刷流保种          | 不整理        | qB-brush 默认分类         |
+| `downloads/manual`  | 手动/临时下载     | 整理         | qB-media 分类 `manual`  |
+| `downloads/private` | 私密视频暂存      | 不处理        | qB-media 分类 `private` |
 
 
 **媒体库目录**
 
 
-| 路径                | 说明                       |
-| ----------------- | ------------------------ |
+| 路径                   | 说明                       |
+| ----------------------- | ------------------------ |
 | `media/真人电影/{地区}` | 地区：大陆、港澳台、日韩、欧美、东南亚、其他地区 |
 | `media/真人剧集/{地区}` | 同上                       |
 | `media/动漫电影/{地区}` | 同上                       |
@@ -76,7 +46,7 @@ NAS 上搭 MoviePilot + qB + Emby 这一套，**自己部署**往往要在多个
 | `media/未分类/剧集`    | MoviePilot 兜底目录（脚本补建）    |
 
 
-> `downloads/private`、`media/小电影` 需自行整理入库；不走 MoviePilot 自动刮削转移。
+> `downloads/private`、`media/小电影` 需自行整理入库；不走 MoviePilot 自动刮削转移，可使用[moviepilot插件库](https://github.com/lishi0105/MoviePilot-Plugins)插件实现对非公开发行影片的自动整理入库。
 
 ### 2. Emby 媒体库与文件夹
 
@@ -86,7 +56,7 @@ NAS 上搭 MoviePilot + qB + Emby 这一套，**自己部署**往往要在多个
 
 
 | Emby 媒体库  | 类型   | 对应文件夹             |
-| --------- | ---- | ----------------- |
+| --------------- | ---- | ----------------- |
 | 真人电影-{地区} | 电影   | `media/真人电影/{地区}` |
 | 动漫电影-{地区} | 电影   | `media/动漫电影/{地区}` |
 | 真人剧集-{地区} | 电视节目 | `media/真人剧集/{地区}` |
@@ -107,11 +77,11 @@ NAS 上搭 MoviePilot + qB + Emby 这一套，**自己部署**往往要在多个
 **私享影库（建议单独做账号权限）**
 
 
-| Emby 媒体库  | 类型  | 对应文件夹             |
-| --------- | --- | ----------------- |
-| 私享影库-国产   | 电影  | `media/私享影库/国产`   |
-| 私享影库-日韩   | 电影  | `media/私享影库/日韩`   |
-| 私享影库-欧美   | 电影  | `media/私享影库/欧美`   |
+| Emby 媒体库       | 类型  | 对应文件夹             |
+| ----------------- | --- | ----------------- |
+| 私享影库-国产     | 电影  | `media/私享影库/国产`   |
+| 私享影库-日韩     | 电影  | `media/私享影库/日韩`   |
+| 私享影库-欧美     | 电影  | `media/私享影库/欧美`   |
 | 私享影库-其他地区 | 电影  | `media/私享影库/其他地区` |
 
 
@@ -122,12 +92,12 @@ NAS 上搭 MoviePilot + qB + Emby 这一套，**自己部署**往往要在多个
 **全局 Transfer 设置**
 
 
-| 项目        | 默认值                                  |
-| --------- | ------------------------------------ |
-| 整理方式      | 移动（`move`）                           |
+| 项目               | 默认值                                  |
+| ------------------ | ------------------------------------ |
+| 整理方式           | 移动（`move`）                           |
 | 参与整理的资源目录 | `downloads/media`、`downloads/manual` |
-| 排除目录      | `downloads/brush`                    |
-| 不处理       | `downloads/private`                  |
+| 排除目录           | `downloads/brush`                    |
+| 不处理             | `downloads/private`                  |
 
 
 **目录规则（资源目录 → 媒体库）**
@@ -275,14 +245,14 @@ cd /path/to/mpv2/install
 MoviePilot 安装插件、拉取 GitHub 上的规则/资源时会访问 GitHub API。未配置 Token 时容易触发**匿名 API 限流**，表现为插件市场加载失败、索引更新超时等。
 
 
-| 项目   | 说明                                                                                                                  |
-| ---- | ------------------------------------------------------------------------------------------------------------------- |
-| 作用   | 写入 `.env` 的 `GITHUB_TOKEN`，并在 `--init-mpv2` 时同步到 MoviePilot 系统配置                                                    |
+| 项目     | 说明                                                                                                                  |
+| -------- | ------------------------------------------------------------------------------------------------------------------- |
+| 作用     | 写入 `.env` 的 `GITHUB_TOKEN`，并在 `--init-mpv2` 时同步到 MoviePilot 系统配置                                                    |
 | 是否必填 | 否；不装插件、不依赖 GitHub 资源时可省略                                                                                            |
 | 推荐场景 | 需要从插件市场安装插件、使用依赖 GitHub 的索引/规则时建议配置                                                                                 |
 | 获取方式 | GitHub → Settings → Developer settings → Personal access tokens → 生成 **classic** token；勾选 `public_repo`（只读公开仓库一般够用） |
 | 写入时机 | 初次 `mpv2-install.py` 时加 `--github-token`，或后续写入 `.env` 再执行 `--init-mpv2`                                             |
-| 安全   | Token 存在 `.env`（权限 `600`），不要提交到 git                                                                                 |
+| 安全     | Token 存在 `.env`（权限 `600`），不要提交到 git                                                                                 |
 
 
 示例：
@@ -313,11 +283,11 @@ python3 mpv2-install.py --init-mpv2 --host-ip 192.168.1.100
 **各 init 命令中的实际用途**
 
 
-| 命令            | 访问地址（默认）                                        | 说明                                             |
-| ------------- | ----------------------------------------------- | ---------------------------------------------- |
-| `--init-qb`   | `http://{host-ip}:7097`、`http://{host-ip}:7098` | 从宿主机登录 qB WebUI、写配置                            |
-| `--init-emby` | `http://{host-ip}:7096`                         | 创建媒体库、生成 API Key（若 `.env` 已有 `EMBY_URL` 则优先用它） |
-| `--init-mpv2` | `http://{host-ip}:9443`                         | 登录 MoviePilot 并写入下载器 / 目录 / 规则                 |
+| 命令             | 访问地址（默认）                                        | 说明                                             |
+| ---------------- | ------------------------------------------------- | ---------------------------------------------- |
+| `--init-qb`      | `http://{host-ip}:7097`、`http://{host-ip}:7098`  | 从宿主机登录 qB WebUI、写配置                            |
+| `--init-emby`    | `http://{host-ip}:7096`                           | 创建媒体库、生成 API Key（若 `.env` 已有 `EMBY_URL` 则优先用它） |
+| `--init-mpv2`    | `http://{host-ip}:9443`                           | 登录 MoviePilot 并写入下载器 / 目录 / 规则                 |
 
 
 **建议手动指定 `--host-ip` 的情况**
@@ -421,26 +391,12 @@ EMBY_USER=admin
 EMBY_PASSWORD=EmbyPassword
 ```
 
-MoviePilot 登录（§3 生成 `.env` 时已有，确认即可）：
-
-```text
-MOVIEPILOT_USER=admin
-MOVIEPILOT_PASSWORD=...
-```
-
-可选：
-
-```text
-EMBY_API_KEY=...          # 留空时 --init-emby 会尝试自动创建并写回
-GITHUB_TOKEN=...          # 插件/ GitHub 资源访问，见 §2.2
-```
-
 ## 7. 初始化 qB
 
 容器运行中执行：
 
 ```bash
-python3 mpv2-install.py --init-qb --host-ip 192.168.1.100
+python3 mpv2-install.py --init-qb
 ```
 
 说明：
@@ -547,16 +503,16 @@ python3 mpv2-install.py --init-csf --password 'YourStrongPassword'
 ## 12. 常用访问端口
 
 
-| 服务               | 端口   | 说明         |
-| ---------------- | ---- | ---------- |
-| MoviePilot Web   | 9443 | 主界面        |
-| MoviePilot API   | 3001 | API 服务     |
-| qB-media         | 7097 | 日常下载 WebUI |
-| qB-brush         | 7098 | 刷流 WebUI   |
-| Emby             | 7096 | HTTP       |
-| Emby HTTPS       | 7020 | HTTPS      |
-| ChineseSubFinder | 7035 | WebUI      |
-| ChineseSubFinder | 7037 | 视频列表缩略图    |
+| 服务               | 端口   | 说明              |
+| ------------------ | ------ | ----------------- |
+| MoviePilot Web     | 9443   | 主界面            |
+| MoviePilot API     | 3001   | API 服务          |
+| qB-media           | 7097   | 日常下载 WebUI    |
+| qB-brush           | 7098   | 刷流 WebUI        |
+| Emby               | 7096   | HTTP              |
+| Emby HTTPS         | 7020   | HTTPS             |
+| ChineseSubFinder   | 7035   | WebUI             |
+| ChineseSubFinder   | 7037   | 视频列表缩略图    |
 
 
 CookieCloud（MoviePilot 内置，浏览器插件同步 PT Cookie）：
@@ -602,13 +558,13 @@ docker compose up -d
 脚本**不会**自动安装插件。建议完成 §9 init-mpv2、§10 init-csf 且 §13 验证通过后，先按 [站点认证及站点添加.md](插件配置/站点认证及站点添加.md) 完成 PT 站点配置，再按需安装下列插件并参照 `插件配置/` 目录文档填写。
 
 
-| 项目 | 配置文件 | 用途 |
-|------|----------|------|
-| 站点认证与添加 | [插件配置/站点认证及站点添加.md](插件配置/站点认证及站点添加.md) | 用户认证、PT 站点 Cookie/Token 添加、RSS 与影视订阅（**非插件**，使用搜索/订阅前建议先完成） |
+| 项目            | 配置文件 | 用途 |
+|-----------------|----------|------|
+| 站点认证与添加   | [插件配置/站点认证及站点添加.md](插件配置/站点认证及站点添加.md) | 用户认证、PT 站点 Cookie/Token 添加、RSS 与影视订阅（**非插件**，使用搜索/订阅前建议先完成） |
 | ChineseSubFinder | [插件配置/ChineseSubFinder插件配置.md](插件配置/ChineseSubFinder插件配置.md) | MP 整理完成后通知 CSF 补字幕（**可选**；Emby 联动已覆盖主场景） |
-| 目录实时监控 | [插件配置/目录实时监控插件配置.md](插件配置/目录实时监控插件配置.md) | 监控 `downloads/manual`，手动拷贝/外部导入资源自动识别、刮削、整理 |
-| 媒体库刮削 | [插件配置/媒体库刮削插件配置.md](插件配置/媒体库刮削插件配置.md) | 对已入库历史媒体补海报/NFO；**默认关闭定时**，需要时手动跑一次 |
-| 站点刷流 | [插件配置/站点刷流插件配置.md](插件配置/站点刷流插件配置.md) | 调度 `qB-刷流专用`，资源只进 `downloads/brush`，与日常下载隔离 |
+| 目录实时监控     | [插件配置/目录实时监控插件配置.md](插件配置/目录实时监控插件配置.md) | 监控 `downloads/manual`，手动拷贝/外部导入资源自动识别、刮削、整理 |
+| 媒体库刮削       | [插件配置/媒体库刮削插件配置.md](插件配置/媒体库刮削插件配置.md) | 对已入库历史媒体补海报/NFO；**默认关闭定时**，需要时手动跑一次 |
+| 站点刷流         | [插件配置/站点刷流插件配置.md](插件配置/站点刷流插件配置.md) | 调度 `qB-刷流专用`，资源只进 `downloads/brush`，与日常下载隔离 |
 
 
 建议安装顺序：
