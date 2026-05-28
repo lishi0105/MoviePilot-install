@@ -59,6 +59,19 @@ EMBY_PASSWORD=你的Emby管理员密码
 # 是否同步脚本管理媒体库的 LibraryOptions（中文元数据、实时监控、字幕语言等）。默认 true。
 # EMBY_SYNC_LIBRARY_OPTIONS=true
 
+# 是否让电影库从元数据下载器导入合集信息。默认 true。
+# 对应 Emby 媒体库设置里的“从元数据下载器导入合集信息”。
+# EMBY_IMPORT_COLLECTIONS=true
+
+# 是否尝试为所有用户的电影库开启“按合集分组显示”。默认 true。
+# 对应 Emby 电影库页面右上角三个点里的“Group items into collections / 按合集分组”。
+# 注意：这是用户端显示偏好，不是媒体库扫描选项；部分 Emby 客户端可能仍需手动打开一次。
+# EMBY_GROUP_ITEMS_INTO_COLLECTIONS=true
+
+# “按合集分组显示”属于客户端显示偏好，默认写入 Emby 常用 client=emby。
+# 如果你发现某个客户端无效，可把它在 Emby 的 Client 名称追加进来，例如：emby,Emby Web,Android
+# EMBY_COLLECTION_DISPLAY_CLIENTS=emby
+
 DATA_DIR=/volume1/media-data
 EMBY_API_KEY_APP_NAME=MoviePilotV2
 EMBY_CREATE_API_KEY=true
@@ -92,6 +105,7 @@ def get_bool_env(env_values: dict[str, str], key: str, default: bool) -> bool:
 
 DEFAULT_REGIONS = ["大陆", "港澳台", "日韩", "欧美", "东南亚", "其他地区"]
 DEFAULT_PRIVATE_REGIONS = ["国产", "日韩", "欧美", "其他地区"]
+DEFAULT_COLLECTION_DISPLAY_CLIENTS = ["emby"]
 
 # 二级媒体库：先按分类，再按地区；地区顺序见 DEFAULT_REGIONS。
 LIBRARY_CATEGORY_SPECS: tuple[tuple[str, str], ...] = (
@@ -410,7 +424,12 @@ def emby_library_needs_adult_metadata(library_name: str) -> bool:
     )
 
 
-def emby_build_library_options(path: str, *, library_name: str = "") -> dict[str, Any]:
+def emby_build_library_options(
+    path: str,
+    *,
+    library_name: str = "",
+    import_collections: bool = True,
+) -> dict[str, Any]:
     return {
         "EnableArchiveMediaFiles": False,
         "EnablePhotos": False,
@@ -454,7 +473,9 @@ def emby_build_library_options(path: str, *, library_name: str = "") -> dict[str
         "CollapseSingleItemFolders": False,
         "ForceCollapseSingleItemFolders": False,
         "EnableAdultMetadata": emby_library_needs_adult_metadata(library_name),
-        "ImportCollections": True,
+        # 电影合集：从元数据下载器导入合集信息，例如 TMDb collection。
+        # 这个选项只负责“生成/导入合集关系”，不负责前端是否把电影库按合集折叠显示。
+        "ImportCollections": import_collections,
         "EnableMultiVersionByFiles": True,
         "EnableMultiVersionByMetadata": True,
         "EnableMultiPartItems": True,
@@ -470,13 +491,18 @@ def emby_create_virtual_folder(
     name: str,
     collection_type: str,
     path: str,
+    import_collections: bool = True,
     refresh_library: bool = False,
     user_id: str = "",
 ) -> None:
     """
     创建 Emby 媒体库。
     """
-    library_options = emby_build_library_options(path, library_name=name)
+    library_options = emby_build_library_options(
+        path,
+        library_name=name,
+        import_collections=import_collections,
+    )
 
     payload = {
         "Name": name,
@@ -514,9 +540,14 @@ def emby_update_library_options(
     library_id: str,
     library_name: str,
     path: str,
+    import_collections: bool = True,
     user_id: str = "",
 ) -> None:
-    library_options = emby_build_library_options(path, library_name=library_name)
+    library_options = emby_build_library_options(
+        path,
+        library_name=library_name,
+        import_collections=import_collections,
+    )
     payload = {
         "Id": library_id,
         "LibraryOptions": library_options,
@@ -552,6 +583,7 @@ def emby_sync_managed_library_options(
         return
 
     desired_libraries = emby_build_libraries(config)
+    import_collections = get_bool_env(config, "EMBY_IMPORT_COLLECTIONS", True)
     updated = 0
     for library in desired_libraries:
         name = library["name"]
@@ -574,6 +606,7 @@ def emby_sync_managed_library_options(
                 library_id=library_id,
                 library_name=name,
                 path=path,
+                import_collections=import_collections,
                 user_id=user_id,
             )
             updated += 1
@@ -584,7 +617,7 @@ def emby_sync_managed_library_options(
     if updated:
         log(
             "媒体库选项：中文元数据(zh-CN)、实时监控、字幕语言(chi/zho)、"
-            f"私享/小电影启用成人元数据；已同步 {updated} 个库。",
+            f"导入合集信息={import_collections}、私享/小电影启用成人元数据；已同步 {updated} 个库。",
             "success",
         )
 
@@ -916,6 +949,7 @@ def emby_init_libraries(
     ))
 
     desired_libraries = emby_build_libraries(config)
+    import_collections = get_bool_env(config, "EMBY_IMPORT_COLLECTIONS", True)
     folders = emby_delete_old_libraries_if_needed(
         session,
         base_url,
@@ -939,6 +973,7 @@ def emby_init_libraries(
             name=name,
             collection_type=library["collection_type"],
             path=library["path"],
+            import_collections=import_collections,
             refresh_library=refresh_library,
             user_id=user_id,
         )
@@ -977,6 +1012,14 @@ def emby_init_libraries(
         user_id=user_id,
     )
 
+    emby_apply_collection_display_grouping(
+        session,
+        base_url,
+        token,
+        config,
+        user_id=user_id,
+    )
+
 
 def emby_build_ordered_view_ids(
     folders: list[dict[str, Any]],
@@ -1004,6 +1047,250 @@ def emby_build_ordered_view_ids(
             seen.add(item_id)
 
     return ordered
+
+
+def emby_is_movie_library(library: dict[str, Any]) -> bool:
+    """判断脚本配置项是否为电影类媒体库。"""
+    return str(library.get("collection_type", "")).strip().lower() == "movies"
+
+
+def emby_get_collection_display_clients(config: dict[str, str]) -> list[str]:
+    """
+    Emby 的“按合集分组显示”属于 DisplayPreferences，通常按 User + Client + Library 维度保存。
+    Web 端常见 client 值是 emby；如果实际客户端不生效，可以在 .env 中扩展。
+    """
+    return get_csv_env(
+        config,
+        "EMBY_COLLECTION_DISPLAY_CLIENTS",
+        DEFAULT_COLLECTION_DISPLAY_CLIENTS,
+    )
+
+
+def emby_get_display_preferences(
+    session: requests.Session,
+    base_url: str,
+    token: str,
+    display_preference_id: str,
+    target_user_id: str,
+    *,
+    client: str = "emby",
+    user_id: str = "",
+) -> dict[str, Any]:
+    """
+    读取指定用户在指定客户端、指定媒体库上的显示偏好。
+
+    Emby/Jellyfin 系 API 一般为：
+      GET /DisplayPreferences/{Id}?UserId={userId}&Client={client}
+    不同版本大小写兼容性略有差异，因此这里做两组参数兜底。
+    """
+    attempts = [
+        {"UserId": target_user_id, "Client": client},
+        {"userId": target_user_id, "client": client},
+    ]
+    errors: list[str] = []
+
+    for params in attempts:
+        resp = emby_request(
+            session,
+            "GET",
+            base_url,
+            f"/DisplayPreferences/{display_preference_id}",
+            token=token,
+            user_id=user_id or None,
+            params=params,
+            timeout=20,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            if isinstance(data, dict):
+                return data
+            raise RuntimeError(f"无法识别 Emby DisplayPreferences 返回结构：{data}")
+
+        errors.append(f"{params} -> {resp.status_code} {resp.text[:300]}")
+
+    raise RuntimeError("读取 Emby DisplayPreferences 失败：\n- " + "\n- ".join(errors))
+
+
+def emby_set_display_preferences(
+    session: requests.Session,
+    base_url: str,
+    token: str,
+    display_preference_id: str,
+    target_user_id: str,
+    display_preferences: dict[str, Any],
+    *,
+    client: str = "emby",
+    user_id: str = "",
+) -> None:
+    """写入指定用户在指定客户端、指定媒体库上的显示偏好。"""
+    attempts = [
+        {"UserId": target_user_id, "Client": client},
+        {"userId": target_user_id, "client": client},
+    ]
+    errors: list[str] = []
+
+    for params in attempts:
+        resp = emby_request(
+            session,
+            "POST",
+            base_url,
+            f"/DisplayPreferences/{display_preference_id}",
+            token=token,
+            user_id=user_id or None,
+            params=params,
+            json_body=display_preferences,
+            timeout=20,
+        )
+        if resp.status_code in (200, 204):
+            return
+
+        errors.append(f"{params} -> {resp.status_code} {resp.text[:300]}")
+
+    raise RuntimeError("写入 Emby DisplayPreferences 失败：\n- " + "\n- ".join(errors))
+
+
+def emby_enable_group_items_into_collections_pref(
+    display_preferences: dict[str, Any],
+    *,
+    display_preference_id: str,
+    client: str,
+) -> dict[str, Any]:
+    """
+    在 DisplayPreferences 中开启“Group items into collections / 按合集分组”。
+
+    这个字段在不同 Emby 客户端/版本里可能存在命名差异；为提高兼容性，
+    同时写入常见顶层字段和 CustomPrefs 字段。未知字段通常会被服务端忽略。
+    """
+    patched = dict(display_preferences)
+    patched["Id"] = str(patched.get("Id") or display_preference_id)
+    patched["Client"] = client
+
+    custom_prefs = patched.get("CustomPrefs")
+    if not isinstance(custom_prefs, dict):
+        custom_prefs = {}
+
+    # 常见 Web/Android/TV 客户端使用字符串形式保存自定义偏好。
+    for key in (
+        "GroupItemsIntoCollections",
+        "groupItemsIntoCollections",
+        "GroupByCollection",
+        "GroupByCollections",
+        "CollectionGrouping",
+        "collectionGrouping",
+    ):
+        custom_prefs[key] = "true"
+
+    patched["CustomPrefs"] = custom_prefs
+
+    # 兼容可能采用顶层字段保存的客户端。
+    patched["GroupItemsIntoCollections"] = True
+    patched["GroupByCollection"] = True
+    patched["GroupByCollections"] = True
+    patched["CollectionGrouping"] = True
+
+    # 部分排序/筛选条件会让 Emby 客户端自动禁用合集分组。这里不强行覆盖已有排序，
+    # 但新建偏好时给一个稳定默认值，避免首次进入库时被空值影响。
+    patched.setdefault("SortBy", "SortName")
+    patched.setdefault("SortOrder", "Ascending")
+
+    return patched
+
+
+def emby_apply_collection_display_grouping(
+    session: requests.Session,
+    base_url: str,
+    token: str,
+    config: dict[str, str],
+    *,
+    user_id: str = "",
+) -> None:
+    """
+    尝试为所有用户的电影库开启“按合集分组显示”。
+
+    说明：
+    - ImportCollections 是媒体库扫描/元数据选项，用于生成合集关系；
+    - DisplayPreferences 是前端显示偏好，用于把电影库里的多部电影折叠成合集入口；
+    - 这里仅对 movies 类型媒体库处理，避免影响剧集/综艺筛选体验。
+    """
+    if not get_bool_env(config, "EMBY_GROUP_ITEMS_INTO_COLLECTIONS", True):
+        log("EMBY_GROUP_ITEMS_INTO_COLLECTIONS=false，跳过电影库按合集分组显示。", "warning")
+        return
+
+    desired_libraries = [library for library in emby_build_libraries(config) if emby_is_movie_library(library)]
+    if not desired_libraries:
+        log("未发现电影类媒体库，跳过按合集分组显示。", "warning")
+        return
+
+    folders = emby_get_virtual_folders(session, base_url, token, user_id)
+    movie_view_ids: list[tuple[str, str]] = []
+    for library in desired_libraries:
+        name = library["name"]
+        folder = emby_find_folder(folders, name)
+        if not folder:
+            continue
+        item_id = emby_folder_item_id(folder)
+        if item_id:
+            movie_view_ids.append((name, item_id))
+
+    if not movie_view_ids:
+        log("未找到电影媒体库 ItemId，跳过按合集分组显示。", "warning")
+        return
+
+    users = emby_list_users(session, base_url, token, user_id)
+    if not users:
+        log("未找到 Emby 用户，跳过按合集分组显示。", "warning")
+        return
+
+    clients = emby_get_collection_display_clients(config)
+    updated = 0
+    for user in users:
+        target_user_id = str(user.get("Id") or "").strip()
+        user_name = str(user.get("Name") or target_user_id).strip()
+        if not target_user_id:
+            continue
+
+        for library_name, view_id in movie_view_ids:
+            for client in clients:
+                try:
+                    preferences = emby_get_display_preferences(
+                        session,
+                        base_url,
+                        token,
+                        view_id,
+                        target_user_id,
+                        client=client,
+                        user_id=user_id,
+                    )
+                    patched = emby_enable_group_items_into_collections_pref(
+                        preferences,
+                        display_preference_id=view_id,
+                        client=client,
+                    )
+                    emby_set_display_preferences(
+                        session,
+                        base_url,
+                        token,
+                        view_id,
+                        target_user_id,
+                        patched,
+                        client=client,
+                        user_id=user_id,
+                    )
+                    updated += 1
+                    log(f"已尝试开启按合集分组显示：用户={user_name}，库={library_name}，client={client}", "success")
+                except Exception as exc:
+                    log(
+                        f"开启按合集分组显示失败：用户={user_name}，库={library_name}，"
+                        f"client={client}，{exc}",
+                        "warning",
+                    )
+
+    if updated:
+        log(
+            f"电影库按合集分组显示已写入 {updated} 项 DisplayPreferences；"
+            "如个别客户端仍不生效，需要在该客户端电影库右上角三个点里手动打开一次。",
+            "success",
+        )
 
 
 def emby_get_user_configuration(
